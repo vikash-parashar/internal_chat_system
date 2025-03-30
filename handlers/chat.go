@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"internal_chat_system/models"
@@ -24,19 +25,23 @@ func Init(repo *repository.MessageRepo) {
 }
 
 func SendMessage(hub *ws.Hub) http.HandlerFunc {
-	// inside SendMessage handler, after saving the message
-	// redis.Publish(msg.LocationID, msg)
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		var msg models.Message
 		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid JSON payload")
 			return
 		}
 		msg.ID = uuid.New().String()
 
+		if msg.LocationID == "" || msg.SenderUserID == "" || msg.ReceiverContactID == "" || msg.Content == "" {
+			log.Printf("❌ Validation error: missing fields in %+v", msg)
+			writeError(w, http.StatusBadRequest, "Missing required fields")
+			return
+		}
+
 		if err := messageRepo.SaveMessage(&msg); err != nil {
-			http.Error(w, "Could not save message", http.StatusInternalServerError)
+			log.Printf("❌ DB Error on SaveMessage: %v", err)
+			writeError(w, http.StatusInternalServerError, "Could not save message")
 			return
 		}
 
@@ -45,7 +50,7 @@ func SendMessage(hub *ws.Hub) http.HandlerFunc {
 			Message:    msg,
 		}
 
-		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, http.StatusCreated, msg)
 	}
 }
 
@@ -57,7 +62,7 @@ func HandleWebSocket(hub *ws.Hub) http.HandlerFunc {
 
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			http.Error(w, "WebSocket Upgrade Failed", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "WebSocket Upgrade Failed")
 			return
 		}
 
@@ -83,17 +88,18 @@ func GetMessageHistory(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 
 	if locationID == "" || contactID == "" || userID == "" {
-		http.Error(w, "Missing query params", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Missing query params")
 		return
 	}
 
 	messages, err := messageRepo.GetConversation(locationID, contactID, userID)
 	if err != nil {
-		http.Error(w, "Failed to fetch messages", http.StatusInternalServerError)
+		log.Printf("❌ Error fetching conversation: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to fetch messages")
 		return
 	}
 
-	json.NewEncoder(w).Encode(messages)
+	writeJSON(w, http.StatusOK, messages)
 }
 
 func MarkMessageAsRead(w http.ResponseWriter, r *http.Request) {
@@ -102,15 +108,33 @@ func MarkMessageAsRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	err := messageRepo.MarkMessagesRead(payload.MessageIDs)
 	if err != nil {
-		http.Error(w, "Failed to mark messages as read", http.StatusInternalServerError)
+		log.Printf("❌ Failed to mark messages read: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to mark messages as read")
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeSuccess(w, http.StatusOK, "Messages marked as read")
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("❌ Failed to encode JSON: %v", err)
+	}
+}
+
+func writeError(w http.ResponseWriter, status int, errMsg string) {
+	log.Printf("❌ %s", errMsg)
+	writeJSON(w, status, map[string]string{"error": errMsg})
+}
+
+func writeSuccess(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"message": message})
 }
