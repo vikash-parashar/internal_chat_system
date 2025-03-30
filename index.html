@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Internal Chat Test</title>
+</head>
+<body>
+  <h3>Internal Chat WebSocket</h3>
+  <input id="location_id" placeholder="Location ID" />
+  <input id="user_id" placeholder="User ID" />
+  <input id="contact_id" placeholder="Contact ID" />
+  <button onclick="connectWS()">Connect</button>
+  <br /><br />
+  <textarea id="chat" rows="10" cols="50" readonly></textarea><br>
+  <input id="msg" placeholder="Type a message..." />
+  <button onclick="sendMsg()">Send</button>
+
+  <script>
+    let socket;
+
+    function connectWS() {
+      const loc = document.getElementById("location_id").value;
+      const user = document.getElementById("user_id").value;
+      const contact = document.getElementById("contact_id").value;
+
+      socket = new WebSocket(`ws://localhost:8080/ws?location_id=${loc}&user_id=${user}&contact_id=${contact}`);
+
+      socket.onopen = () => {
+        document.getElementById("chat").value += "Connected\\n";
+      };
+
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        document.getElementById("chat").value += `[${msg.sent_at}] ${msg.content}\\n`;
+      };
+
+      socket.onclose = () => {
+        document.getElementById("chat").value += "Disconnected\\n";
+      };
+    }
+
+    function sendMsg() {
+      const payload = {
+        location_id: document.getElementById("location_id").value,
+        sender_user_id: document.getElementById("user_id").value,
+        receiver_contact_id: document.getElementById("contact_id").value,
+        content: document.getElementById("msg").value
+      };
+
+      fetch("http://localhost:8080/chat/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+          // Add Authorization header if JWT is enabled
+        },
+        body: JSON.stringify(payload)
+      }).then(() => {
+        document.getElementById("msg").value = "";
+      });
+    }
+  </script>
+</body>
+</html>

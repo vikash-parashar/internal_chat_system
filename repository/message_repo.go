@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"internal_chat_system/models"
+
+	"github.com/lib/pq"
 )
 
 type MessageRepo struct {
@@ -64,4 +66,13 @@ func (r *MessageRepo) GetConversation(locationID, contactID, userID string) ([]m
 		messages = append(messages, msg)
 	}
 	return messages, nil
+}
+
+func (r *MessageRepo) MarkMessagesRead(ids []string) error {
+	query := `
+		UPDATE messages SET is_read = true, read_at = now()
+		WHERE id = ANY($1)
+	`
+	_, err := r.DB.Exec(query, pq.Array(ids))
+	return err
 }
