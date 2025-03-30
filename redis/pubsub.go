@@ -103,3 +103,24 @@ func IsClientConnected(locationID, recipientID string, clients map[string]map[*w
 	}
 	return false
 }
+
+type PushEvent struct {
+	MessageID    string `json:"message_id"`
+	LocationID   string `json:"location_id"`
+	ReceiverID   string `json:"receiver_id"`   // can be user or contact
+	ReceiverType string `json:"receiver_type"` // user or contact
+	Content      string `json:"content"`
+}
+
+func PublishPushEvent(event PushEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if err := rdb.Publish(ctx, "push:events", data).Err(); err != nil {
+		log.Printf("❌ Failed to publish push event: %v", err)
+		return err
+	}
+	log.Printf("📣 Push event published for receiver %s (%s)", event.ReceiverID, event.ReceiverType)
+	return nil
+}

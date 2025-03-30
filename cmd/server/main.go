@@ -63,6 +63,7 @@ func main() {
 	r.Get("/chat/sessions", wrapJSON(handlers.ListChatSessions(repo)))
 	r.Get("/chat/search", handlers.SearchMessages(repo))
 	r.Get("/admin/chat/sessions", handlers.AdminListSessions(repo))
+	r.Put("/admin/chat/messages/delete", handlers.AdminDeleteMessages(repo))
 
 	log.Println("✅ Server started on :8080")
 	http.ListenAndServe(":8080", r)

@@ -90,6 +90,14 @@ func SendMessage(hub *ws.Hub) http.HandlerFunc {
 			_ = redis.QueueOfflineMessage(targetType, msg.LocationID, targetID, data)
 		}
 
+		_ = redis.PublishPushEvent(redis.PushEvent{
+			MessageID:    msg.ID,
+			LocationID:   msg.LocationID,
+			ReceiverID:   targetID,
+			ReceiverType: targetType,
+			Content:      msg.Content,
+		})
+
 		writeJSON(w, http.StatusCreated, msg)
 	}
 }
@@ -383,6 +391,38 @@ func AdminListSessions(repo *repository.MessageRepo) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, sessions)
+	}
+}
+
+func AdminDeleteMessages(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authCtx := auth.GetAuthContext(r)
+		if authCtx.UserType != "ADMIN" && authCtx.UserType != "SUPERADMIN" {
+			writeError(w, http.StatusForbidden, "Unauthorized")
+			return
+		}
+
+		var payload struct {
+			MessageIDs []string `json:"message_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid request")
+			return
+		}
+
+		var uuids []uuid.UUID
+		for _, id := range payload.MessageIDs {
+			if u, err := uuid.Parse(id); err == nil {
+				uuids = append(uuids, u)
+			}
+		}
+
+		if err := repo.AdminDeleteMessages(uuids); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to delete messages")
+			return
+		}
+
+		writeSuccess(w, http.StatusOK, "Messages soft-deleted")
 	}
 }
 

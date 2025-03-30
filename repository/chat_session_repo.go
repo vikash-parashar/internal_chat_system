@@ -57,6 +57,11 @@ const (
 		ORDER BY cs.last_message_at DESC NULLS LAST, cs.started_at DESC
 		LIMIT $2 OFFSET $3
 	`
+	queryAdminDeleteMessages = `
+		UPDATE messages
+		SET deleted_at = now()
+		WHERE id = ANY($1)
+	`
 )
 
 func (r *ChatSessionRepo) GetOrCreateSession(contactID, userID, locationID string) (string, error) {
@@ -110,4 +115,13 @@ func (r *MessageRepo) AdminListAllSessions(locationID string, limit, offset int)
 		sessions = append(sessions, s)
 	}
 	return sessions, nil
+}
+
+func (r *MessageRepo) AdminDeleteMessages(ids []uuid.UUID) error {
+
+	_, err := r.DB.Exec(queryAdminDeleteMessages, pq.Array(ids))
+	if err != nil {
+		log.Printf("❌ AdminDeleteMessages failed: %v", err)
+	}
+	return err
 }
