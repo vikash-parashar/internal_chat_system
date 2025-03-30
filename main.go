@@ -49,13 +49,20 @@ func main() {
 	// Subscribe to active location(s)
 	go redis.Subscribe("default-location-id", hub)
 
+	// repo := repository.NewMessageRepo(db)
+	// handlers.Init(repo)
+
 	repo := repository.NewMessageRepo(db)
-	handlers.Init(repo)
+	sessionRepo := repository.NewChatSessionRepo(db)
+	handlers.Init(repo, sessionRepo)
 
 	r.Post("/chat/send", wrapJSON(handlers.SendMessage(hub)))
 	r.Get("/chat/history", wrapJSON(handlers.GetMessageHistory))
 	r.Get("/ws", handlers.HandleWebSocket(hub))
 	r.Put("/chat/read", wrapJSON(handlers.MarkMessageAsRead))
+	r.Get("/chat/sessions", wrapJSON(handlers.ListChatSessions(repo)))
+	r.Get("/chat/search", handlers.SearchMessages(repo))
+	r.Get("/admin/chat/sessions", handlers.AdminListSessions(repo))
 
 	log.Println("✅ Server started on :8080")
 	http.ListenAndServe(":8080", r)

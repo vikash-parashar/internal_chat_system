@@ -28,5 +28,24 @@ CREATE INDEX idx_chat_conversation ON messages (
     receiver_contact_id
 );
 
--- Index for querying unread messages
-CREATE INDEX idx_chat_unread ON messages (receiver_user_id, is_read);
+CREATE TABLE chat_sessions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  contact_id UUID NOT NULL,
+  user_id UUID NOT NULL,
+  location_id UUID NOT NULL,
+  started_at TIMESTAMP DEFAULT now(),
+  last_message_at TIMESTAMP,
+  UNIQUE(contact_id, user_id, location_id)
+);
+
+
+-- Unique constraint to avoid duplicate sessions
+CREATE UNIQUE INDEX uniq_chat_session ON chat_sessions (contact_id, user_id, location_id);
+
+ALTER TABLE messages ADD COLUMN session_id UUID REFERENCES chat_sessions(id);
+
+
+
+ALTER TABLE messages ADD COLUMN delivered_at TIMESTAMP;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_messages_content_trgm ON messages USING gin (content gin_trgm_ops);
