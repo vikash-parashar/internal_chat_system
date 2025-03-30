@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	"internal_chat_system/handlers"
+	"internal_chat_system/internal/s3"
+	"internal_chat_system/notifications"
 	"internal_chat_system/redis"
 	"internal_chat_system/repository"
 	"internal_chat_system/ws"
@@ -19,6 +21,12 @@ import (
 )
 
 func main() {
+
+	err := notifications.Init("config/firebase-service-account.json")
+	if err != nil {
+		log.Fatal("Failed to initialize Firebase")
+	}
+
 	db, err := sql.Open("postgres", "postgres://postgres@localhost:5432/chat_db?sslmode=disable")
 	if err != nil {
 		log.Fatal("Failed to connect to DB:", err)
@@ -55,6 +63,7 @@ func main() {
 	repo := repository.NewMessageRepo(db)
 	sessionRepo := repository.NewChatSessionRepo(db)
 	handlers.Init(repo, sessionRepo)
+	s3.Init()
 
 	r.Post("/chat/send", wrapJSON(handlers.SendMessage(hub)))
 	r.Get("/chat/history", wrapJSON(handlers.GetMessageHistory))
@@ -64,6 +73,14 @@ func main() {
 	r.Get("/chat/search", handlers.SearchMessages(repo))
 	r.Get("/admin/chat/sessions", handlers.AdminListSessions(repo))
 	r.Put("/admin/chat/messages/delete", handlers.AdminDeleteMessages(repo))
+	r.Get("/chat/presence", handlers.GetPresenceStatus)
+	r.Post("/chat/upload", handlers.UploadChatFile)
+	r.Delete("/chat/message/{id}", handlers.DeleteChatMessage(repo))
+	r.Post("/chat/message/reaction", handlers.AddReaction(repo))
+	r.Delete("/chat/message/reaction", handlers.RemoveReaction(repo))
+	r.Put("/chat/message/{id}/pin", handlers.PinMessage(repo))
+	r.Put("/chat/message/{id}/unpin", handlers.UnpinMessage(repo))
+	r.Get("/chat/session/{session_id}/pinned", handlers.GetPinnedMessages(repo))
 
 	log.Println("✅ Server started on :8080")
 	http.ListenAndServe(":8080", r)

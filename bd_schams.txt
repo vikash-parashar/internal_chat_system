@@ -50,3 +50,44 @@ ALTER TABLE messages ADD COLUMN delivered_at TIMESTAMP;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_messages_content_trgm ON messages USING gin (content gin_trgm_ops);
 ALTER TABLE messages ADD COLUMN deleted_at TIMESTAMP;
+
+
+ALTER TABLE messages
+ADD COLUMN file_url TEXT,
+ADD COLUMN file_name TEXT,
+ADD COLUMN file_type TEXT;
+
+
+
+CREATE TABLE message_reactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT now(),
+    UNIQUE(message_id, user_id, emoji) -- prevent spamming same emoji
+);
+
+
+ALTER TABLE messages ADD COLUMN reply_to_id UUID REFERENCES messages(id) ON DELETE SET NULL;
+
+ALTER TABLE messages
+ADD COLUMN edited_at TIMESTAMP,
+ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE;
+
+
+ALTER TABLE messages
+ADD COLUMN reply_to_id UUID REFERENCES messages(id),
+ADD COLUMN edited_at TIMESTAMP,
+ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE;
+
+
+
+CREATE TABLE device_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE,
+    token TEXT NOT NULL,
+    platform TEXT,
+    created_at TIMESTAMP DEFAULT now(),
+    updated_at TIMESTAMP DEFAULT now()
+);

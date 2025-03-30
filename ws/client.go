@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"internal_chat_system/models"
+	"internal_chat_system/presence"
 
 	"github.com/gorilla/websocket"
 )
@@ -21,14 +22,42 @@ type Client struct {
 
 func (c *Client) ReadPump() {
 	defer func() {
+		// ❌ Mark user offline in Redis
+		presence.MarkUserOffline(c.UserID, c.ContactID, c.LocationID)
+
 		c.Hub.Unregister <- c
 		c.Conn.Close()
 	}()
 
+	// ✅ Mark user online on connect
+	presence.MarkUserOnline(c.UserID, c.ContactID, c.LocationID)
+
 	for {
-		_, _, err := c.Conn.ReadMessage()
+		_, msg, err := c.Conn.ReadMessage()
 		if err != nil {
 			break
+		}
+
+		// Detect base type
+		var base struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(msg, &base); err != nil {
+			continue
+		}
+
+		switch base.Type {
+		case "typing":
+			// Broadcast raw typing event to everyone in the same location
+			c.Hub.Broadcast <- BroadcastMessage{
+				LocationID: c.LocationID,
+				RawData:    msg,
+			}
+		case "ping":
+			// Refresh online status heartbeat
+			presence.MarkUserOnline(c.UserID, c.ContactID, c.LocationID)
+		default:
+			// Unknown type, ignore
 		}
 	}
 }

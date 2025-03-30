@@ -16,19 +16,21 @@ const (
 	queryInsertMessage = `
 		INSERT INTO messages (
 			id, location_id, sender_user_id, receiver_user_id,
-			sender_contact_id, receiver_contact_id, content, sent_at, is_read, session_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			sender_contact_id, receiver_contact_id, content, sent_at, is_read, session_id, file_url, file_name, file_type, reply_to_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
 
 	querySelectConversation = `
 		SELECT id, location_id, sender_user_id, receiver_user_id,
 			sender_contact_id, receiver_contact_id, content,
-			sent_at, read_at, delivered_at, is_read
+			sent_at, read_at, is_read,
+			file_url, file_name, file_type, reply_to_id
 		FROM messages
 		WHERE location_id = $1 AND (
 			(sender_user_id = $2 AND receiver_contact_id = $3) OR
 			(sender_contact_id = $3 AND receiver_user_id = $2)
 		)
+		AND deleted_at IS NULL
 		ORDER BY sent_at ASC
 	`
 
@@ -62,6 +64,7 @@ const (
 		) m ON true
 		WHERE (cs.contact_id = $1 OR cs.user_id = $2)
 		AND ($3 = '' OR cs.location_id = $3)
+		AND deleted_at IS NULL
 		ORDER BY cs.last_message_at DESC NULLS LAST, cs.started_at DESC
 	`
 
@@ -78,6 +81,45 @@ const (
 		)
 		ORDER BY sent_at DESC
 		LIMIT $5
+	`
+
+	queryDeleteMessage = `UPDATE messages SET deleted_at = now() WHERE id = $1`
+
+	queryGetReactions = `
+		SELECT id, message_id, user_id, emoji, created_at
+		FROM message_reactions
+		WHERE message_id = $1
+	`
+	queryRemoveReaction = `
+		DELETE FROM message_reactions
+		WHERE message_id = $1 AND user_id = $2 AND emoji = $3
+	`
+	queryAddReaction = `
+		INSERT INTO message_reactions (message_id, user_id, emoji)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (message_id, user_id, emoji) DO NOTHING
+	`
+	querySelectMessageByID = `
+		SELECT id, location_id, sender_user_id, receiver_user_id,
+			sender_contact_id, receiver_contact_id, content,
+			sent_at, read_at, is_read, file_url, file_name, file_type
+		FROM messages WHERE id = $1 AND deleted_at IS NULL
+	`
+
+	queryUpdateMessageContent = `
+	UPDATE messages SET content = $1, edited_at = now()
+	WHERE id = $2 AND sender_user_id = $3 AND deleted_at IS NULL
+	`
+
+	queryTogglePinMessage = `
+	UPDATE messages SET is_pinned = $1
+	WHERE id = $2
+	`
+	queryGetPinnedMessages = `
+		SELECT id, content, file_url, file_name, file_type, sent_at
+		FROM messages
+		WHERE session_id = $1 AND is_pinned = true
+		ORDER BY sent_at DESC
 	`
 )
 
@@ -113,7 +155,7 @@ func (r *MessageRepo) SaveMessage(msg *models.Message) error {
 		return err
 	}
 
-	var receiverUserID, senderContactID *uuid.UUID
+	var receiverUserID, senderContactID, replyToID *uuid.UUID
 	if msg.ReceiverUserID != "" {
 		val, err := uuid.Parse(msg.ReceiverUserID)
 		if err != nil {
@@ -130,6 +172,14 @@ func (r *MessageRepo) SaveMessage(msg *models.Message) error {
 		}
 		senderContactID = &val
 	}
+	if msg.ReplyToID != nil {
+		val, err := uuid.Parse(*msg.ReplyToID)
+		if err != nil {
+			log.Println("❌ Invalid UUID for ReplyToID:", err)
+			return err
+		}
+		replyToID = &val
+	}
 
 	sessionID, err := uuid.Parse(msg.SessionID)
 	if err != nil {
@@ -143,7 +193,7 @@ func (r *MessageRepo) SaveMessage(msg *models.Message) error {
 	_, err = r.DB.Exec(queryInsertMessage,
 		id, locationID, senderUserID, receiverUserID,
 		senderContactID, receiverContactID, msg.Content,
-		msg.SentAt, msg.IsRead, sessionID,
+		msg.SentAt, msg.IsRead, sessionID, msg.FileURL, msg.FileName, msg.FileType, replyToID,
 	)
 	if err != nil {
 		log.Println("❌ Failed to insert message:", err)
@@ -162,18 +212,48 @@ func (r *MessageRepo) GetConversation(locationID, contactID, userID string) ([]m
 	defer rows.Close()
 
 	var messages []models.DBMessage
+	messageMap := make(map[uuid.UUID]*models.DBMessage)
+
 	for rows.Next() {
 		var msg models.DBMessage
+		var replyToID *uuid.UUID
+
 		err := rows.Scan(&msg.ID, &msg.LocationID, &msg.SenderUserID, &msg.ReceiverUserID,
-			&msg.SenderContactID, &msg.ReceiverContactID, &msg.Content, &msg.SentAt,
-			&msg.ReadAt, &msg.DeliveredAt, &msg.IsRead)
+			&msg.SenderContactID, &msg.ReceiverContactID, &msg.Content,
+			&msg.SentAt, &msg.ReadAt, &msg.IsRead,
+			&msg.FileURL, &msg.FileName, &msg.FileType,
+			&replyToID, &msg.EditedAt, &msg.IsPinned,
+		)
 
 		if err != nil {
-			log.Println("❌ Failed to scan row:", err)
+			log.Println("❌ Failed to scan message:", err)
 			return nil, err
 		}
+
+		msg.MessageType = "text"
+		if msg.FileURL != "" {
+			msg.MessageType = "file"
+		}
+
+		msg.Reactions, _ = r.GetReactions(msg.ID.String())
+		if replyToID != nil {
+			msg.ReplyToID = replyToID
+		}
+
+		messageMap[msg.ID] = &msg
 		messages = append(messages, msg)
 	}
+
+	// Populate reply_to inline
+	for i := range messages {
+		if messages[i].ReplyToID != nil {
+			if parent, ok := messageMap[*messages[i].ReplyToID]; ok {
+				msgCopy := *parent
+				messages[i].ReplyTo = &msgCopy
+			}
+		}
+	}
+
 	return messages, nil
 }
 
@@ -244,4 +324,142 @@ func (r *MessageRepo) SearchMessages(userID, contactID, locationID, query string
 		results = append(results, msg)
 	}
 	return results, nil
+}
+
+func (r *MessageRepo) DeleteMessage(id uuid.UUID) error {
+
+	_, err := r.DB.Exec(queryDeleteMessage, id)
+	return err
+}
+
+func (r *MessageRepo) AddReaction(msgID, userID, emoji string) error {
+	log.Printf("➕ Adding reaction: %s by user %s to message %s", emoji, userID, msgID)
+
+	_, err := r.DB.Exec(queryAddReaction, msgID, userID, emoji)
+	if err != nil {
+		log.Printf("❌ Failed to add reaction: %v", err)
+	} else {
+		log.Printf("✅ Reaction added: %s by user %s", emoji, userID)
+	}
+	return err
+}
+
+func (r *MessageRepo) RemoveReaction(msgID, userID, emoji string) error {
+	log.Printf("❌ Removing reaction: %s by user %s from message %s", emoji, userID, msgID)
+
+	_, err := r.DB.Exec(queryRemoveReaction, msgID, userID, emoji)
+	if err != nil {
+		log.Printf("❌ Failed to remove reaction: %v", err)
+	} else {
+		log.Printf("✅ Reaction removed: %s by user %s", emoji, userID)
+	}
+	return err
+}
+
+func (r *MessageRepo) GetReactions(msgID string) ([]models.MessageReaction, error) {
+	log.Printf("🔍 Fetching reactions for message %s", msgID)
+
+	rows, err := r.DB.Query(queryGetReactions, msgID)
+	if err != nil {
+		log.Printf("❌ Failed to fetch reactions: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reactions []models.MessageReaction
+	for rows.Next() {
+		var r models.MessageReaction
+		if err := rows.Scan(&r.ID, &r.MessageID, &r.UserID, &r.Emoji, &r.CreatedAt); err != nil {
+			log.Printf("❌ Failed to scan reaction row: %v", err)
+			return nil, err
+		}
+		reactions = append(reactions, r)
+	}
+
+	log.Printf("✅ Found %d reaction(s) for message %s", len(reactions), msgID)
+	return reactions, nil
+}
+
+func (r *MessageRepo) GetMessageByID(id string) (models.DBMessage, error) {
+	var msg models.DBMessage
+	err := r.DB.QueryRow(querySelectMessageByID, id).Scan(
+		&msg.ID, &msg.LocationID, &msg.SenderUserID, &msg.ReceiverUserID,
+		&msg.SenderContactID, &msg.ReceiverContactID, &msg.Content,
+		&msg.SentAt, &msg.ReadAt, &msg.IsRead,
+		&msg.FileURL, &msg.FileName, &msg.FileType,
+	)
+	if err != nil {
+		log.Println("❌ Failed to fetch reply message:", err)
+		return msg, err
+	}
+	msg.MessageType = "text"
+	if msg.FileURL != "" {
+		msg.MessageType = "file"
+	}
+	return msg, nil
+}
+
+func (r *MessageRepo) UpdateMessageContent(msgID, senderID, newContent string) error {
+	log.Printf("✏️ Editing message %s by user %s", msgID, senderID)
+	_, err := r.DB.Exec(queryUpdateMessageContent, newContent, msgID, senderID)
+	if err != nil {
+		log.Printf("❌ Failed to edit message: %v", err)
+	}
+	return err
+}
+
+func (r *MessageRepo) TogglePinMessage(msgID string, pin bool) error {
+	log.Printf("📌 Pin status update for message %s to %v", msgID, pin)
+	_, err := r.DB.Exec(queryTogglePinMessage, pin, msgID)
+	if err != nil {
+		log.Printf("❌ Failed to update pin status: %v", err)
+	}
+	return err
+}
+
+func (r *MessageRepo) GetPinnedMessages(sessionID string) ([]models.PinnedMessage, error) {
+	log.Printf("📍 Fetching pinned messages for session %s", sessionID)
+	rows, err := r.DB.Query(queryGetPinnedMessages, sessionID)
+	if err != nil {
+		log.Printf("❌ Failed to fetch pinned messages: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pinned []models.PinnedMessage
+	for rows.Next() {
+		var m models.PinnedMessage
+		err := rows.Scan(&m.ID, &m.Content, &m.FileURL, &m.FileName, &m.FileType, &m.SentAt)
+		if err != nil {
+			log.Printf("❌ Failed to scan pinned message: %v", err)
+			return nil, err
+		}
+		pinned = append(pinned, m)
+	}
+
+	return pinned, nil
+}
+
+func (r *MessageRepo) GetDeviceToken(userID string) (string, error) {
+	var token string
+	err := r.DB.QueryRow("SELECT token FROM device_tokens WHERE user_id = $1", userID).Scan(&token)
+	if err != nil {
+		log.Printf("❌ GetDeviceToken error: %v", err)
+	}
+	return token, err
+}
+
+func (r *MessageRepo) UpsertDeviceToken(userID, token string) error {
+	query := `
+		INSERT INTO device_tokens (user_id, token, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (user_id) DO UPDATE
+		SET token = EXCLUDED.token,
+		    updated_at = now()
+	`
+	_, err := r.DB.Exec(query, userID, token)
+	if err != nil {
+		log.Printf("❌ Failed to upsert device token: %v", err)
+	}
+	return err
 }

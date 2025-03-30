@@ -7,12 +7,16 @@ import (
 	"net/http"
 	"strconv"
 
+	"internal_chat_system/internal/s3"
 	"internal_chat_system/middleware/auth"
 	"internal_chat_system/models"
+	"internal_chat_system/notifications"
+	"internal_chat_system/presence"
 	"internal_chat_system/redis"
 	"internal_chat_system/repository"
 	"internal_chat_system/ws"
 
+	"github.com/go-chi/chi"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -52,9 +56,13 @@ func SendMessage(hub *ws.Hub) http.HandlerFunc {
 			return
 		}
 
-		if msg.LocationID == "" || msg.SenderUserID == "" || msg.ReceiverContactID == "" || msg.Content == "" {
-			log.Printf("❌ Validation error: missing fields in %+v", msg)
+		if msg.LocationID == "" || msg.SenderUserID == "" || msg.ReceiverContactID == "" {
 			writeError(w, http.StatusBadRequest, "Missing required fields")
+			return
+		}
+
+		if msg.Content == "" && msg.FileURL == "" {
+			writeError(w, http.StatusBadRequest, "Either message content or file must be provided")
 			return
 		}
 
@@ -88,6 +96,13 @@ func SendMessage(hub *ws.Hub) http.HandlerFunc {
 		} else {
 			log.Printf("📥 Queuing offline message for %s:%s", targetType, targetID)
 			_ = redis.QueueOfflineMessage(targetType, msg.LocationID, targetID, data)
+		}
+
+		if !presence.IsUserOnline(targetID) {
+			token, err := messageRepo.GetDeviceToken(targetID) // You must implement this
+			if err == nil && token != "" {
+				notifications.SendPush(token, "New message", msg.Content)
+			}
 		}
 
 		_ = redis.PublishPushEvent(redis.PushEvent{
@@ -160,6 +175,13 @@ func HandleWebSocket(hub *ws.Hub) http.HandlerFunc {
 			targetType = "contact"
 			targetID = contactID
 		}
+		// Track presence
+		go presence.MarkUserOnline(userID, contactID, locationID)
+
+		go func() {
+			<-r.Context().Done()
+			presence.MarkUserOffline(userID, contactID, locationID)
+		}()
 
 		if offlineMsgs, err := redis.FlushQueuedMessages(targetType, locationID, targetID, func(ids []string) {
 			var uuids []uuid.UUID
@@ -183,6 +205,8 @@ func HandleWebSocket(hub *ws.Hub) http.HandlerFunc {
 
 		go client.ReadPump()
 		go client.WritePump()
+		go presence.MarkUserOnline(client.UserID, client.ContactID, client.LocationID)
+
 	}
 }
 
@@ -241,47 +265,66 @@ func MarkMessageAsRead(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, http.StatusOK, "Messages marked as read")
 }
 
-// func ListChatSessions(repo *repository.MessageRepo) http.HandlerFunc {
-// 	// Supports optional ?location_id, ?limit, and ?offset params
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		authCtx := auth.GetAuthContext(r)
-// 		userID := authCtx.UserID
-// 		userType := authCtx.UserType
+func GetPresenceStatus(w http.ResponseWriter, r *http.Request) {
+	locationID := r.URL.Query().Get("location_id")
+	userID := r.URL.Query().Get("user_id")       // For checking doctors/staff
+	contactID := r.URL.Query().Get("contact_id") // For checking patients
 
-// 		if userID == "" || (userType != "DOCTOR" && userType != "PATIENT") {
-// 			writeError(w, http.StatusUnauthorized, "Unauthorized access")
-// 			return
-// 		}
+	if locationID == "" || (userID == "" && contactID == "") {
+		writeError(w, http.StatusBadRequest, "Missing location_id and user/contact ID")
+		return
+	}
 
-// 		var contactID string
-// 		if userType == "PATIENT" {
-// 			contactID = userID
-// 		}
+	status, err := redis.GetPresenceStatus(userID, contactID, locationID)
+	if err != nil {
+		log.Printf("❌ Presence lookup failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "Presence check failed")
+		return
+	}
 
-// 		locationID := r.URL.Query().Get("location_id")
-// 		limitParam := r.URL.Query().Get("limit")
-// 		offsetParam := r.URL.Query().Get("offset")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": status, // "online" or "last seen at ..."
+	})
+}
 
-// 		limit := 20
-// 		offset := 0
+func UploadChatFile(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(10 << 20) // 10 MB
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid file upload")
+		return
+	}
 
-// 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
-// 			limit = parsedLimit
-// 		}
-// 		if parsedOffset, err := strconv.Atoi(offsetParam); err == nil && parsedOffset >= 0 {
-// 			offset = parsedOffset
-// 		}
+	file, fileHeader, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Missing file")
+		return
+	}
+	allowedTypes := map[string]bool{
+		"image/jpeg":         true,
+		"image/png":          true,
+		"application/pdf":    true,
+		"application/msword": true,
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	}
 
-// 		sessions, err := repo.ListEnrichedChatSessionsWithFilter(userID, contactID, locationID, limit, offset)
-// 		if err != nil {
-// 			log.Printf("❌ Failed to fetch chat sessions: %v", err)
-// 			writeError(w, http.StatusInternalServerError, "Could not fetch sessions")
-// 			return
-// 		}
+	fileType := fileHeader.Header.Get("Content-Type")
+	if !allowedTypes[fileType] {
+		writeError(w, http.StatusBadRequest, "Unsupported file type")
+		return
+	}
 
-// 		writeJSON(w, http.StatusOK, sessions)
-// 	}
-// }
+	url, err := s3.UploadFile(file, fileHeader, "chat-attachments")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to upload file")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"file_url":  url,
+		"file_name": fileHeader.Filename,
+		"file_type": fileHeader.Header.Get("Content-Type"),
+	})
+}
 
 func ListChatSessions(repo *repository.MessageRepo) http.HandlerFunc {
 	// Supports optional ?location_id, ?limit, and ?offset params
@@ -424,6 +467,131 @@ func AdminDeleteMessages(repo *repository.MessageRepo) http.HandlerFunc {
 
 		writeSuccess(w, http.StatusOK, "Messages soft-deleted")
 	}
+}
+
+func DeleteChatMessage(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := auth.GetAuthContext(r)
+		if auth.UserType != "ADMIN" && auth.UserType != "DOCTOR" && auth.UserType != "SUPERADMIN" {
+			writeError(w, http.StatusForbidden, "Unauthorized")
+			return
+		}
+
+		idStr := chi.URLParam(r, "id")
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid message ID")
+			return
+		}
+
+		if err := repo.DeleteMessage(id); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to delete message")
+			return
+		}
+
+		writeSuccess(w, http.StatusOK, "Message deleted")
+	}
+}
+
+func AddReaction(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := auth.GetAuthContext(r)
+		var payload struct {
+			MessageID string `json:"message_id"`
+			Emoji     string `json:"emoji"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid JSON")
+			return
+		}
+		err := repo.AddReaction(payload.MessageID, auth.UserID, payload.Emoji)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to add reaction")
+			return
+		}
+		writeSuccess(w, http.StatusOK, "Reaction added")
+	}
+}
+
+func RemoveReaction(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := auth.GetAuthContext(r)
+		var payload struct {
+			MessageID string `json:"message_id"`
+			Emoji     string `json:"emoji"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid JSON")
+			return
+		}
+		err := repo.RemoveReaction(payload.MessageID, auth.UserID, payload.Emoji)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to remove reaction")
+			return
+		}
+		writeSuccess(w, http.StatusOK, "Reaction removed")
+	}
+}
+
+func PinMessage(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		msgID := chi.URLParam(r, "id")
+		err := repo.TogglePinMessage(msgID, true)
+		if err != nil {
+			log.Printf("❌ Failed to pin message %s: %v", msgID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to pin message")
+			return
+		}
+		writeSuccess(w, http.StatusOK, "Message pinned")
+	}
+}
+
+func UnpinMessage(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		msgID := chi.URLParam(r, "id")
+		err := repo.TogglePinMessage(msgID, false)
+		if err != nil {
+			log.Printf("❌ Failed to unpin message %s: %v", msgID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to unpin message")
+			return
+		}
+		writeSuccess(w, http.StatusOK, "Message unpinned")
+	}
+}
+
+func GetPinnedMessages(repo *repository.MessageRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := chi.URLParam(r, "session_id")
+		messages, err := repo.GetPinnedMessages(sessionID)
+		if err != nil {
+			log.Printf("❌ Failed to fetch pinned messages: %v", err)
+			writeError(w, http.StatusInternalServerError, "Failed to fetch pinned messages")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(messages)
+	}
+}
+
+// POST /auth/device-token
+func SaveDeviceToken(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		UserID string `json:"user_id"`
+		Token  string `json:"token"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+
+	err := messageRepo.UpsertDeviceToken(payload.UserID, payload.Token)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to save token")
+		return
+	}
+
+	writeSuccess(w, http.StatusOK, "Device token saved")
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

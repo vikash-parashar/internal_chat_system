@@ -9,6 +9,7 @@ import (
 type BroadcastMessage struct {
 	LocationID string
 	Message    models.Message
+	RawData    []byte
 }
 
 type Hub struct {
@@ -68,6 +69,13 @@ func (h *Hub) Run() {
 					log.Printf("⚠️ Client channel closed unexpectedly: user=%s contact=%s", client.UserID, client.ContactID)
 				}
 			}
+			if msg.RawData != nil {
+				for client := range h.Clients[msg.LocationID] {
+					client.Send <- msg.RawData
+				}
+				continue
+			}
 		}
+
 	}
 }
