@@ -1,0 +1,352 @@
+{
+  "info": {
+    "name": "Internal Chat System",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Send Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/send",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "send"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"3f3e4239-3dc8-4050-9332-b1f9b529f89b\",\n  \"location_id\": \"3c751e38-b0c0-4a76-8b4f-10d9681aaf2a\",\n  \"sender_user_id\": \"8f8dbbf3-e99b-4c18-8eba-447a31def05e\",\n  \"receiver_contact_id\": \"e577bb9c-7118-4acd-8521-188ccf9ef8d9\",\n  \"content\": \"Hello from Postman!\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Chat History",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/history?location_id=3c751e38-b0c0-4a76-8b4f-10d9681aaf2a&user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e&contact_id=e577bb9c-7118-4acd-8521-188ccf9ef8d9",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "history?location_id=3c751e38-b0c0-4a76-8b4f-10d9681aaf2a&user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e&contact_id=e577bb9c-7118-4acd-8521-188ccf9ef8d9"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Mark Messages as Read",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/read",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "read"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_ids\": [\n    \"6b22d521-138f-4d86-9217-c3003b5df1a2\"\n  ]\n}"
+        }
+      }
+    },
+    {
+      "name": "Search Messages",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/search?query=hello&location_id=3c751e38-b0c0-4a76-8b4f-10d9681aaf2a&user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e&contact_id=e577bb9c-7118-4acd-8521-188ccf9ef8d9&limit=10",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "search?query=hello&location_id=3c751e38-b0c0-4a76-8b4f-10d9681aaf2a&user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e&contact_id=e577bb9c-7118-4acd-8521-188ccf9ef8d9&limit=10"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Delete Message",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/message/6b22d521-138f-4d86-9217-c3003b5df1a2",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "message",
+            "6b22d521-138f-4d86-9217-c3003b5df1a2"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Add Reaction",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/message/reaction",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "message",
+            "reaction"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_id\": \"6b22d521-138f-4d86-9217-c3003b5df1a2\",\n  \"user_id\": \"8f8dbbf3-e99b-4c18-8eba-447a31def05e\",\n  \"emoji\": \"\\u2764\\ufe0f\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Remove Reaction",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/message/reaction",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "message",
+            "reaction"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_id\": \"6b22d521-138f-4d86-9217-c3003b5df1a2\",\n  \"user_id\": \"8f8dbbf3-e99b-4c18-8eba-447a31def05e\",\n  \"emoji\": \"\\u2764\\ufe0f\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Pin Message",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/message/6b22d521-138f-4d86-9217-c3003b5df1a2/pin",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "message",
+            "6b22d521-138f-4d86-9217-c3003b5df1a2",
+            "pin"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Unpin Message",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/message/6b22d521-138f-4d86-9217-c3003b5df1a2/unpin",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "message",
+            "6b22d521-138f-4d86-9217-c3003b5df1a2",
+            "unpin"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Pinned Messages",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/session/b1f1a56d-465b-4419-95a0-cb5376b65f4a/pinned",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "session",
+            "b1f1a56d-465b-4419-95a0-cb5376b65f4a",
+            "pinned"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin - List Sessions",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/admin/chat/sessions",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "admin",
+            "chat",
+            "sessions"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin - Delete Message",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/admin/chat/messages/delete",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "admin",
+            "chat",
+            "messages",
+            "delete"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_ids\": [\n    \"6b22d521-138f-4d86-9217-c3003b5df1a2\"\n  ]\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Presence",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8080/chat/presence?user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "chat",
+            "presence?user_id=8f8dbbf3-e99b-4c18-8eba-447a31def05e"
+          ]
+        }
+      }
+    }
+  ]
+}
